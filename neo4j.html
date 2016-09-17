@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset=utf-8 />
+    <title>Evandro Roberto - Projeto Final - Neo4j</title>
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no'/>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/js/bootstrap.min.js"></script>
+    <script src='https://api.mapbox.com/mapbox.js/v2.2.3/mapbox.js'></script>
+    <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+    <link href='https://api.mapbox.com/mapbox.js/plugins/leaflet-draw/v0.2.3/leaflet.draw.css' rel='stylesheet' />
+    <script src='https://api.mapbox.com/mapbox.js/plugins/leaflet-draw/v0.2.3/leaflet.draw.js'></script>
+    <script src='https://api.mapbox.com/mapbox.js/plugins/leaflet-geodesy/v0.1.0/leaflet-geodesy.js'></script>
+    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" rel="stylesheet">
+    <link href='https://api.mapbox.com/mapbox.js/v2.2.3/mapbox.css' rel='stylesheet' />
+    <link href="style.css" rel="stylesheet" type="text/css">
+    <link href='https://api.mapbox.com/mapbox.js/plugins/leaflet-draw/v0.2.3/leaflet.draw.css' rel='stylesheet' />
+    <script src='https://api.mapbox.com/mapbox.js/plugins/leaflet-draw/v0.2.3/leaflet.draw.js'></script>
+    <script src='https://api.mapbox.com/mapbox.js/plugins/leaflet-geodesy/v0.1.0/leaflet-geodesy.js'></script>
+</head>
+<body>
+<div id="desc">
+    <div class="top-row">
+        <h3 class="heading">Neo4j + Dados Geográficos</h3>
+    </div>
+</div>
+<div id='map'></div>
+
+<div class="zoom-box prose">
+    <a href="#">
+        <div id="central-zoom" class="fake-button" onclick="changeZoom(this.id)" data-zoom="4"
+        data-position="-15.7782, -52.8395">Brasil
+        </div>
+    </a>
+    <a href="#">
+        <div id="corpus-zoom" class="fake-button" onclick="changeZoom(this.id)" data-zoom="7" 
+        data-position="-15.9495904,-49.2822898">Goiás
+        </div>
+    </a>
+    <a href="#">
+        <div id="clear" class="fake-button" onclick="changeZoom(this.id)" data-zoom="10" 
+        data-position="-15.77, -47.8">Distrito Federal
+        </div>
+    </a>
+    <a href="#">
+        <div id="dist" class="fake-button op" onclick="changeZoom(this.id)" data-zoom="9" 
+        data-position="-15.57, -47.8">Distância
+        </div>
+    </a>
+    <a href="#">
+        <div id="prox" class="fake-button op" onclick="changeZoom(this.id)" data-zoom="10" 
+        data-position="-15.77, -47.8">Proximidade
+        </div>
+    </a>
+    <a href="#">
+        <div id="bbox" class="fake-button op" onclick="changeZoom(this.id)" data-zoom="10" 
+        data-position="-15.77, -47.8">Bounding Box
+        </div>
+    </a>
+</div>
+
+<script>
+    L.mapbox.accessToken    = 'pk.eyJ1IjoiZXZhbmRyb2JlcnRvIiwiYSI6ImNpbWpjajVoZTAwbzd2Zmt1OWU5NTQ0eG4ifQ.hV98g175SlkvpoAonpNTwg';
+    var findWithinDistance  = '/db/data/ext/SpatialPlugin/graphdb/findGeometriesWithinDistance';
+    var findInBBox          = '/db/data/ext/SpatialPlugin/graphdb/findGeometriesInBBox';
+    var baseURI             = 'http://localhost:7474';
+    var map                 = L.mapbox.map('map', 'mapbox.light').setView([-15.7782, -52.8395], 4);
+
+    var layerMunicipios = L.mapbox.featureLayer().addTo(map);
+    var layerRodovias   = L.mapbox.featureLayer().addTo(map);
+    var layerEstados    = L.mapbox.featureLayer().addTo(map);
+    var layerRegioes    = L.mapbox.featureLayer().addTo(map);
+
+    L.control.layers({
+        'Mapbox Streets': L.mapbox.tileLayer('mapbox.light'),
+        'Mapbox Light': L.mapbox.tileLayer('mapbox.streets').addTo(map)
+    }).addTo(map);
+
+    var featureGroup = L.featureGroup().addTo(map);
+
+    var drawControl = new L.Control.Draw({
+        edit: {
+            featureGroup: featureGroup
+        },
+        draw: {
+            polygon: false,
+            polyline: false,
+            rectangle: true,
+            circle: false,
+            marker: true
+        }
+    }).addTo(map);
+
+    map.on('draw:created', showPoints);
+
+    function showPoints(e) {
+        console.log(e);
+        clearMap(map);
+        featureGroup.clearLayers();
+        featureGroup.addLayer(e.layer);
+
+        //se a geometria for um poligono
+        if(e.layer['_latlngs']) {
+            coords = e.layer['_latlngs'];
+            y = [coords[0]['lat'], coords[1]['lat'], coords[2]['lat'], coords[3]['lat']];
+            x = [coords[0]['lng'], coords[1]['lng'], coords[2]['lng'], coords[3]['lng']];
+
+            var params = {
+                "layer": "municipios",
+                "minx": Math.min.apply(Math, x),
+                "maxx": Math.max.apply(Math, x),
+                "miny": Math.min.apply(Math, y),
+                "maxy": Math.max.apply(Math, y)
+            };
+
+            console.log(params);
+
+            var url = baseURI + findInBBox;
+            makePOSTRequest(url, params, function (error, data) {
+
+                if (error) {
+                    console.log("Error");
+                } else {
+                    console.log(data);
+
+                    var municipios = { type: 'FeatureCollection', features: [] };
+
+                    for(var i=0; i <= data.length; i++) {
+                        municipios.features.push({
+                            type: 'Feature',
+                            geometry: {
+                                type: 'Point',
+                                coordinates: [data[i]["data"]["bbox"][0], data[i]["data"]["bbox"][1]]
+                            },
+                            properties: {
+                                'marker-size': "large",
+                                'marker-color': "#E63863",
+                                'marker-symbol': "city",
+                                'title': data[i]["data"]["nome"]
+                            }
+                        });
+                        layerMunicipios.setGeoJSON(municipios);
+                    }
+                }
+            });
+        }
+        //se a geometria for um ponto
+        else if (e.layer['_latlng']) {
+            latlng = e.layer['_latlng'];
+
+            var params = {
+                "layer": "municipios",
+                "pointX": latlng.lng,
+                "pointY": latlng.lat,
+                "distanceInKm": 1000
+            };
+
+            var url = baseURI + findWithinDistance;
+            makePOSTRequest(url, params, function (error, data) {
+
+                if (error) {
+                    console.log("Error");
+                } else {
+                    console.log(params);
+
+                    var closest = { type: 'FeatureCollection', features: [] };
+
+                    closest.features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [data[1]["data"]["bbox"][0], data[1]["data"]["bbox"][1]]
+                        },
+                        properties: {
+                            'marker-size': "large",
+                            'marker-color': "#F2E600",
+                            'marker-symbol': "star",
+                            'title': data[1]["data"]["nome"]
+                        }
+                    });
+                    layerMunicipios.setGeoJSON(closest);
+                    var polyline = L.polyline([[latlng.lat, latlng.lng],[data[1]["data"]["bbox"][1], data[1]["data"]["bbox"][0]]])
+                        .addTo(map);
+                }
+            });
+        }
+    }
+
+    layerMunicipios.on('mouseover', function(e) {
+        e.layer.openPopup();
+    });
+
+    layerMunicipios.on('mouseout', function(e) {
+        e.layer.closePopup();
+    });
+
+    map.on('click', function(e) {
+        clearMap(map);
+        getMunicipios(e);
+    });
+
+    $("#clear").click(function() {
+        clearMap(map);
+        map.eachLayer(function(layer) {
+            if (layer instanceof L.Marker) {
+                map.removeLayer(layer);
+            }
+        });
+    });
+
+    $("#dist").click(function() {
+        clearMap(map);
+        featureGroup.clearLayers();
+        var params = {
+            "layer": "municipios",
+            "pointX": -47.9304084722222,
+            "pointY": -15.7805194722222,
+            "distanceInKm": 100
+        };
+
+        var url = baseURI + findWithinDistance;
+        makePOSTRequest(url, params, function (error, data) {
+
+            if (error) {
+                console.log("Error");
+            } else {
+                console.log(data);
+                
+                var municipios = { type: 'FeatureCollection', features: [] };
+
+                for(var i=0; i <= data.length; i++) {
+                    municipios.features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [data[i]["data"]["bbox"][0], data[i]["data"]["bbox"][1]]
+                        },
+                        properties: {
+                            'marker-size': "large",
+                            'marker-color': "#E63863",
+                            'marker-symbol': i+1,
+                            'title': data[i]["data"]["nome"]
+                        }
+                    });
+
+                    layerMunicipios.setGeoJSON(municipios);
+                }
+            }
+        });
+    });
+
+    $("#prox").click(function() {
+        clearMap(map);
+        featureGroup.clearLayers();
+        var params = {
+            "layer": "municipios",
+            "pointX": -47.9304084722222,
+            "pointY": -15.7805194722222,
+            "distanceInKm": 1000
+        };
+
+        var url = baseURI + findWithinDistance;
+        makePOSTRequest(url, params, function (error, data) {
+
+            if (error) {
+                console.log("Error");
+            } else {
+                console.log(params);
+
+                var closest = { type: 'FeatureCollection', features: [] };
+
+                for(var i=0; i <= 1; i++) {
+                    closest.features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [data[i]["data"]["bbox"][0], data[i]["data"]["bbox"][1]]
+                        },
+                        properties: {
+                            'marker-size': "large",
+                            'marker-color': "#E63863",
+                            'marker-symbol': "star",
+                            'title': data[i]["data"]["nome"]
+                        }
+                    });
+
+                    layerMunicipios.setGeoJSON(closest);
+                }
+
+                var polyline = L.polyline([[latlng.lat, latlng.lng],[data[1]["data"]["bbox"][1], data[1]["data"]["bbox"][0]]])
+                    .addTo(map);
+            }
+        });
+        var polyline = L.polyline([[-15.780519472222, -47.930408472222],[-16.06652, -47.97941]]).addTo(map);
+    });
+
+    $("#bbox").click(function() {
+        clearMap(map);
+        featureGroup.clearLayers();
+        var bounds = [[-16.105195094166007, -48.339843750025791], [-15.444414528150116, -47.248077392578125]];
+        L.rectangle(bounds, {color: "#FF3333", weight: 2}).addTo(map);
+
+        var params = {
+            "layer": "municipios",
+            "miny": -16.105195094166007,
+            "maxy": -15.444414528150116,
+            "minx": -48.339843750025791,
+            "maxx": -47.248077392578125
+        };
+
+        console.log(params);
+
+        var url = baseURI + findInBBox;
+        makePOSTRequest(url, params, function (error, data) {
+
+            if (error) {
+                console.log("Error");
+            } else {
+                console.log(data);
+                
+                var municipios = { type: 'FeatureCollection', features: [] };
+
+                for(var i=0; i <= data.length; i++) {
+                    municipios.features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [data[i]["data"]["bbox"][0], data[i]["data"]["bbox"][1]]
+                        },
+                        properties: {
+                            'marker-size': "large",
+                            'marker-color': "#E63863",
+                            'marker-symbol': "city",
+                            'title': data[i]["data"]["nome"]
+                        }
+                    });
+                    layerMunicipios.setGeoJSON(municipios);
+                }
+            }
+        });
+    });
+
+    function getMunicipios(event) {
+        getMunicipiosWithinDistance(event.latlng);
+        //getAllRodovias(event.latlng);
+    }
+
+    function getMunicipiosWithinDistance(latlng) {
+        var params = {
+            "layer": "municipios",
+            "pointX": latlng.lng,
+            "pointY": latlng.lat,
+            "distanceInKm": 100
+        };
+
+        var url = baseURI + findWithinDistance;
+        makePOSTRequest(url, params, function (error, data) {
+
+            if (error) {
+                console.log("Error");
+            } else {
+                console.log(latlng.lng, latlng.lat);
+                console.log(data);
+
+                var municipios = { type: 'FeatureCollection', features: [] };
+
+                for(var i=0; i <= data.length; i++) {
+                    municipios.features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [data[i]["data"]["bbox"][0], data[i]["data"]["bbox"][1]]
+                        },
+                        properties: {
+                            'marker-size': "large",
+                            'marker-color': "#E63863",
+                            'marker-symbol': i+1,
+                            'title': data[i]["data"]["nome"]
+                        }
+                    });
+
+                    layerMunicipios.setGeoJSON(municipios);
+                }
+            }
+        });
+    }
+
+    //getAllRegioes();
+    function getAllRegioes() {
+        var params = {
+            "layer": "estados",
+            "pointX": -47,
+            "pointY": -15,
+            "distanceInKm": 100
+        };
+
+        var url = baseURI + findWithinDistance;
+        makePOSTRequest(url, params, function (error, data) {
+
+            if (error) {
+                console.log("Error");
+            } else {
+                console.log(data);
+                var estados = { type: 'FeatureCollection', features: [] };
+
+                for(var i=0; i <= data.length; i++) {
+
+                    var string = data[i]["data"]["wkt"];
+                    var results = string.slice(13).replace(/\(/g, "[").replace(/\)/g, "]").replace(/\,\s\[/g, ",[").replace(/\,\s\-/g, "],[-").replace(/\s/g, ",");
+                    console.log(results);
+
+                    estados.features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'MultiPolygon',
+                            coordinates: [results]
+                        },
+                        properties: {
+                            'title': data[i]["data"]["nome"],
+                            'description' : data[i]["data"]["sigla"]
+                        }
+                    });
+                    //console.log(data[i]["data"]["nome"]);
+                    //console.log(estados);
+                    layerEstados.setGeoJSON(estados);
+                }
+            }
+        });
+    }
+
+    //getAllRodovias();
+    function getAllRodovias(latlng) {
+        var params = {
+            "layer": "rodovias",
+            "pointX": latlng.lng,
+            "pointY": latlng.lat,
+            "distanceInKm": 80
+        };
+
+        var url = baseURI + findWithinDistance;
+        makePOSTRequest(url, params, function (error, data) {
+
+            if (error) {
+                console.log("Error");
+            } else {
+                //console.log(data);
+
+                var rodovias = { type: 'FeatureCollection', features: [] };
+
+                for(var i=0; i <= data.length; i++) {
+
+                    var string = data[i]["data"]["wkt"];
+                    var matches = string.match(/(\-?\d+(\.\d+)?)\s(\-?\d+(\.\d+)?)+/g);
+                    var results = [];
+
+                    matches.forEach(function (match) {
+                        results.push(match.split(' '));
+                    });
+
+                    rodovias.features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'MultiLineString',
+                            coordinates: [results]
+                        },
+                        properties: {
+                            'title': data[i]["data"]["nome"],
+                            "stroke": "#0B8DB7",
+                            "stroke-width": 3
+                        }
+                    });
+                    layerRodovias.setGeoJSON(rodovias);
+                }
+            }
+        });
+    }
+
+    function makePOSTRequest(url, params, callback) {
+
+        $.ajax({
+            type: 'POST',
+            data: JSON.stringify(params),
+            contentType: 'application/json',
+            url: url,
+            error: function(xhr, statusText, errorThrown) {
+                callback("Error", null);
+            },
+            //headers: authHeader()
+            success: function(data) {
+                //console.log(data);
+                callback(null, data);
+            }
+        })
+    }
+
+    function clearMap(m) {
+        for(var i in m._layers) {
+            if(m._layers[i]._path != undefined) {
+                try {
+                    m.removeLayer(m._layers[i]);
+                }
+                catch(e) {
+                    console.log("problem with " + e + m._layers[i]);
+                }
+            }
+        }
+    }
+
+    $('.fake-button').click(function() {
+        var position = this.getAttribute('data-position');
+        var zoom = this.getAttribute('data-zoom');
+        if (position && zoom) {
+            var point = position.split(',');
+            zoom = parseInt(zoom);
+            map.setView(point, zoom, {animation: true});
+            return false;
+        }
+    });
+
+</script>
+
+</body>
+</html>
+
